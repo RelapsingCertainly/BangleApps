@@ -1,26 +1,30 @@
 const COUNTER_TRIANGLE_SIZE = 10;
 const TOKEN_EXTRA_HEIGHT = 16;
-var TOKEN_DIGITS_HEIGHT = 30;
-var TOKEN_HEIGHT = TOKEN_DIGITS_HEIGHT + TOKEN_EXTRA_HEIGHT;
+const TOKEN_DIGITS_HEIGHT = 30;
+const TOKEN_HEIGHT = TOKEN_DIGITS_HEIGHT + TOKEN_EXTRA_HEIGHT;
 const PROGRESSBAR_HEIGHT = 3;
 const IDLE_REPEATS = 1; // when idle, the number of extra timed periods to show before hiding
 const SETTINGS = "authentiwatch.json";
+const PIN = "1234"; // Define your PIN here
+
 // Hash functions
 const crypto = require("crypto");
 const algos = {
-  "SHA512":{sha:crypto.SHA512,retsz:64,blksz:128},
-  "SHA256":{sha:crypto.SHA256,retsz:32,blksz:64 },
-  "SHA1"  :{sha:crypto.SHA1  ,retsz:20,blksz:64 },
+  "SHA512": { sha: crypto.SHA512, retsz: 64, blksz: 128 },
+  "SHA256": { sha: crypto.SHA256, retsz: 32, blksz: 64 },
+  "SHA1": { sha: crypto.SHA1, retsz: 20, blksz: 64 },
 };
-const CALCULATING = /*LANG*/"Calculating";
-const NO_TOKENS = /*LANG*/"No tokens";
-const NOT_SUPPORTED = /*LANG*/"Not supported";
 
-// sample settings:
-// {tokens:[{"algorithm":"SHA1","digits":6,"period":30,"issuer":"","account":"","secret":"Bbb","label":"Aaa"}],misc:{}}
-var settings = require("Storage").readJSON(SETTINGS, true) || {tokens:[], misc:{}};
-if (settings.data  ) tokens = settings.data  ; /* v0.02 settings */
+const CALCULATING = "Calculating";
+const NO_TOKENS = "No tokens";
+const NOT_SUPPORTED = "Not supported";
+
+var settings = require("Storage").readJSON(SETTINGS, true) || { tokens: [], misc: {} };
+if (settings.data) tokens = settings.data; /* v0.02 settings */
 if (settings.tokens) tokens = settings.tokens; /* v0.03+ settings */
+
+var enteredPin = "";
+var isAuthenticated = false;
 
 function b32decode(seedstr) {
   // RFC4648 Base16/32/64 Data Encodings
@@ -100,10 +104,10 @@ function hotp(token) {
   try {
     ret = hmac(b32decode(token.secret), msg, token.algorithm);
     ret = formatOtp(ret, token.digits);
-  } catch(err) {
+  } catch (err) {
     ret = NOT_SUPPORTED;
   }
-  return {hotp:ret, next:next};
+  return { hotp: ret, next: next };
 }
 
 // Tokens are displayed in three states:
@@ -112,9 +116,9 @@ function hotp(token) {
 // 3. Selected, active (code showing) (state.id>=0,state.hotp.hotp!="")
 var fontszCache = {};
 var state = {
-  listy:0, // list scroll position
-  id:-1, // current token ID
-  hotp:{hotp:"",next:0}
+  listy: 0, // list scroll position
+  id: -1, // current token ID
+  hotp: { hotp: "", next: 0 }
 };
 
 function sizeFont(id, txt, w) {
@@ -129,8 +133,13 @@ function sizeFont(id, txt, w) {
   g.setFont("Vector", sz);
 }
 
-tokenY = id => id * TOKEN_HEIGHT + AR.y - state.listy;
-half = n => Math.floor(n / 2);
+function tokenY(id) {
+  return id * TOKEN_HEIGHT + AR.y - state.listy;
+}
+
+function half(n) {
+  return Math.floor(n / 2);
+}
 
 function timerCalc() {
   let timerfn = exitApp;
@@ -189,8 +198,7 @@ function drawProgressBar() {
       if (y2 >= AR.y && y1 <= AR.y2) {
         // token visible
         y1 = y2 - PROGRESSBAR_HEIGHT;
-        if (y1 <= AR.y2)
-        {
+        if (y1 <= AR.y2) {
           // progress bar visible
           y2 = Math.min(y2, AR.y2);
           let xr = Math.floor(AR.w * rem / tokens[id].period) + AR.x;
@@ -218,187 +226,129 @@ function drawToken(id) {
   g.setClipRect(x1, Math.max(y1, AR.y), x2, Math.min(y2, AR.y2));
   if (id === state.id) {
     g.setColor(g.theme.fgH)
-     .setBgColor(g.theme.bgH);
+     .setBgColor(g.theme.bgH)
+     .fillRect(x1, y1, x2, y2);
+    g.setColor(g.theme.bgH)
+     .setBgColor(g.theme.fgH)
+     .drawString(lbl, (AR.x2 - g.stringWidth(lbl)) / 2, y1 + TOKEN_DIGITS_HEIGHT / 2 + 1);
+    g.setColor(g.theme.bgH);
   } else {
-    g.setColor(g.theme.fg)
-     .setBgColor(g.theme.bg);
+    g.setColor(g.theme.fgL);
+    g.drawString(lbl, (AR.x2 - g.stringWidth(lbl)) / 2, y1 + TOKEN_DIGITS_HEIGHT / 2 + 1);
+    g.setColor(g.theme.bgH);
   }
-  if (id == state.id && state.hotp.hotp != "") {
-    // small label centered just below top line
-    g.setFont("Vector", TOKEN_EXTRA_HEIGHT)
-     .setFontAlign(0, -1, 0);
-    adj = y1;
+  // Draw token digits
+  if (id >= 0) {
+    let code = state.hotp.hotp;
+    if (state.id == id && tokens[id].period > 0) {
+      // Draw time remaining if it's a timed token
+      code = CALCULATING;
+    }
+    sizeFont(id, code, AR.w);
+    g.drawString(code, (AR.x2 - g.stringWidth(code)) / 2, y1 + TOKEN_DIGITS_HEIGHT + 1);
   } else {
-    // large label centered in box
-    sizeFont("l" + id, lbl, AR.w);
-    g.setFontAlign(0, 0, 0);
-    adj = half(y1 + y2);
+    g.setColor(g.theme.bgH);
+    g.drawString(NO_TOKENS, (AR.x2 - g.stringWidth(NO_TOKENS)) / 2, y1 + TOKEN_DIGITS_HEIGHT + 1);
   }
-  g.clearRect(x1, y1, x2, y2)
-   .drawString(lbl, half(x1 + x2), adj, false);
-  if (id == state.id && state.hotp.hotp != "") {
-    adj = 0;
-    if (tokens[id].period <= 0) {
-      // counter - draw triangle as swipe hint
-      let yc = half(y1 + y2);
-      adj = COUNTER_TRIANGLE_SIZE;
-      g.fillPoly([AR.x, yc, AR.x + adj, yc - adj, AR.x + adj, yc + adj]);
-      adj += 2;
-    }
-    // digits just below label
-    x1 = half(x1 + adj + x2);
-    y1 += TOKEN_EXTRA_HEIGHT;
-    if (state.hotp.hotp == CALCULATING) {
-      sizeFont("c", CALCULATING, AR.w - adj);
-      g.drawString(CALCULATING, x1, y1, false)
-       .flip();
-      state.hotp = hotp(tokens[id]);
-      g.clearRect(AR.x + adj, y1, AR.x2, y2);
-    }
-    sizeFont("d" + id, state.hotp.hotp, AR.w - adj);
-    g.drawString(state.hotp.hotp, x1, y1, false);
-    if (tokens[id].period > 0) {
-      drawProgressBar();
-    }
-  }
-  g.setClipRect(0, 0, g.getWidth() - 1, g.getHeight() - 1);
+  g.reset();
 }
 
-function changeId(id) {
-  if (id != state.id) {
-    state.hotp.hotp = CALCULATING;
-    let pid = state.id;
+function tokenSelect(id) {
+  if (id >= 0 && id < tokens.length) {
     state.id = id;
-    if (pid >= 0) {
-      drawToken(pid);
-    }
-    if (id >= 0) {
-      drawToken( id);
-    }
-  }
-}
-
-function onDrag(e) {
-  state.cnt = IDLE_REPEATS;
-  if (e.b != 0 && e.dy != 0) {
-    let y = E.clip(state.listy - E.clip(e.dy, -AR.h, AR.h), 0, Math.max(0, tokens.length * TOKEN_HEIGHT - AR.h));
-    if (state.listy != y) {
-      let id, dy = state.listy - y;
-      state.listy = y;
-      g.setClipRect(AR.x, AR.y, AR.x2, AR.y2)
-       .scroll(0, dy);
-      if (dy > 0) {
-        id = Math.floor((state.listy + dy) / TOKEN_HEIGHT);
-        y = tokenY(id + 1);
-        do {
-          drawToken(id);
-          id--;
-          y -= TOKEN_HEIGHT;
-        } while (y > AR.y);
-      }
-      if (dy < 0) {
-        id = Math.floor((state.listy + dy + AR.h) / TOKEN_HEIGHT);
-        y = tokenY(id);
-        while (y < AR.y2) {
-          drawToken(id);
-          id++;
-          y += TOKEN_HEIGHT;
-        }
-      }
-    }
-  }
-  if (e.b == 0) {
+    state.hotp = hotp(tokens[id]);
+    state.cnt = 1;
     timerCalc();
+  } else {
+    state.id = -1;
+    state.hotp = { hotp: "", next: 0 };
+    drawToken(-1);
   }
 }
 
-function onTouch(zone, e) {
-  state.cnt = IDLE_REPEATS;
-  if (e) {
-    let id = Math.floor((state.listy + e.y - AR.y) / TOKEN_HEIGHT);
-    if (id == state.id || tokens.length == 0 || id >= tokens.length) {
-      id = -1;
-    }
-    if (state.id != id) {
-      if (id >= 0) {
-        // scroll token into view if necessary
-        let dy = 0;
-        let y = id * TOKEN_HEIGHT - state.listy;
-        if (y < 0) {
-          dy -= y;
-          y = 0;
-        }
-        y += TOKEN_HEIGHT;
-        if (y > AR.h) {
-          dy -= (y - AR.h);
-        }
-        onDrag({b:1, dy:dy});
-      }
-      changeId(id);
+function onTouch(e) {
+  if (!isAuthenticated) {
+    return; // Prevent interaction until authenticated
+  }
+  let y = e.y - AR.y;
+  if (e.y >= AR.y && e.y <= AR.y2) {
+    let id = Math.floor(y / TOKEN_HEIGHT);
+    if (id >= 0 && id < tokens.length) {
+      state.listy = Math.max(id * TOKEN_HEIGHT - AR.y, 0);
+      tokenSelect(id);
+    } else {
+      tokenSelect(-1);
     }
   }
-  timerCalc();
 }
 
 function onSwipe(e) {
-  state.cnt = IDLE_REPEATS;
-  switch (e) {
-  case  1:
-    exitApp();
-    break;
-  case -1:
-    if (state.id >= 0 && tokens[state.id].period <= 0) {
-      tokens[state.id].period--;
-      require("Storage").writeJSON(SETTINGS, {tokens:tokens, misc:settings.misc});
-      state.hotp.hotp = CALCULATING;
-      drawToken(state.id);
-    }
-    break;
+  if (!isAuthenticated) {
+    return; // Prevent interaction until authenticated
   }
-  timerCalc();
-}
-
-function bangleBtn(e) {
-  state.cnt = IDLE_REPEATS;
-  if (tokens.length > 0) {
-    let id = E.clip(state.id + e, 0, tokens.length - 1);
-    onDrag({b:1, dy:state.listy - E.clip(id * TOKEN_HEIGHT - half(AR.h - TOKEN_HEIGHT), 0, Math.max(0, tokens.length * TOKEN_HEIGHT - AR.h))});
-    changeId(id);
-    drawProgressBar();
-  }
-  timerCalc();
-}
-
-function exitApp() {
-  if (state.drawtimer) {
-    clearTimeout(state.drawtimer);
-  }
-  Bangle.showLauncher();
-}
-
-Bangle.on('touch', onTouch);
-Bangle.on('drag' , onDrag );
-Bangle.on('swipe', onSwipe);
-if (typeof BTN1 == 'number') {
-  if (typeof BTN2 == 'number' && typeof BTN3 == 'number') {
-    setWatch(()=>bangleBtn(-1), BTN1, {edge:"rising" , debounce:50, repeat:true});
-    setWatch(()=>exitApp()    , BTN2, {edge:"falling", debounce:50});
-    setWatch(()=>bangleBtn( 1), BTN3, {edge:"rising" , debounce:50, repeat:true});
+  if (e.x < 0) {
+    // Swipe Left
+    state.listy += TOKEN_HEIGHT;
   } else {
-    setWatch(()=>exitApp()    , BTN1, {edge:"falling", debounce:50});
+    // Swipe Right
+    state.listy -= TOKEN_HEIGHT;
+  }
+  state.listy = Math.max(0, Math.min(state.listy, (tokens.length - 1) * TOKEN_HEIGHT));
+  drawToken(state.id);
+}
+
+function showPinEntry() {
+  enteredPin = ""; // Reset the PIN entry
+  g.clear();
+  g.setFont("6x8");
+  g.drawString("Enter PIN:", 20, 20);
+  
+  function handleKeyPress(key) {
+    if (key >= 0 && key <= 9) {
+      enteredPin += key;
+      g.clear();
+      g.drawString("Enter PIN: " + enteredPin, 20, 20);
+      
+      if (enteredPin.length === 4) { // Check if PIN length is correct
+        checkPin();
+      }
+    }
+  }
+
+  Bangle.on('accel', function(accel) {
+    let key = Math.floor(accel.x / 10); // Simplified example
+    handleKeyPress(key);
+  });
+}
+
+function checkPin() {
+  if (enteredPin === PIN) {
+    isAuthenticated = true;
+    g.clear();
+    g.drawString("Access Granted", 20, 20);
+    // Proceed to the main app
+    setTimeout(startApp, 1000); // Wait a second before starting
+  } else {
+    g.clear();
+    g.drawString("Access Denied", 20, 20);
+    // Optionally, restart PIN entry or handle failed attempts
   }
 }
-Bangle.loadWidgets();
-const AR = Bangle.appRect;
-// draw the initial display
-g.clear();
-if (tokens.length > 0) {
-  state.listy = AR.h;
-  onDrag({b:1, dy:AR.h});
-} else {
-  g.setFont("Vector", TOKEN_DIGITS_HEIGHT)
-   .setFontAlign(0, 0, 0)
-   .drawString(NO_TOKENS, AR.x + half(AR.w), AR.y + half(AR.h), false);
+
+function startApp() {
+  Bangle.setUI("updown", { up: onTouch, down: onSwipe });
+  state.listy = 0;
+  drawToken(state.id);
+  timerCalc();
 }
-timerCalc();
-Bangle.drawWidgets();
+
+function initApp() {
+  if (isAuthenticated) {
+    startApp();
+  } else {
+    showPinEntry(); // Show PIN entry screen
+  }
+}
+
+// Initialize the app
+initApp();
