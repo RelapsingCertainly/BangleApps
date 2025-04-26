@@ -1,12 +1,7 @@
 {
-    let softOffTimeout;
     Bangle.on("lock", (on) => {
         if (on) {
-            softOffTimeout = setTimeout(() => Bangle.softOff(), 100);
             Bangle.setLCDTimeout(2);
-        }
-        else {
-            if (softOffTimeout) clearTimeout(softOffTimeout);
         }
     });
     Bangle.on("touch", () => {
