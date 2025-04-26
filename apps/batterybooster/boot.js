@@ -2,7 +2,7 @@
     let softOffTimeout;
     Bangle.on("lock", (on) => {
         if (on) {
-            softOffTimeout = setTimeout(() => Bangle.softOff(), 10800000);
+            softOffTimeout = setTimeout(() => Bangle.softOff(), 100);
             Bangle.setLCDTimeout(2);
         }
         else {
